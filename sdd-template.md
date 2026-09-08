@@ -19,6 +19,20 @@
 | :---- | :---- | :---- | :---- |
 | 0.1 | 2026-09-08 | Luke Lee | Initial solution design outline & requirement decomposition |
 | 1.0 | 2026-09-08 | Luke Lee | Complete end-to-end architecture, sequence diagrams, tool contracts, governance & FinOps |
+| 1.1 | 2026-09-08 | Luke Lee | Upgraded LLM foundation models to Gemini 3.7 Flash; embedded Document Control governance ledger with assigned owners & target dates; expanded Section 7 with 18-week timeline durations, 8.5 FTE resource mappings, and RACI matrix |
+
+## **Open Action Items & Governance Tracking**
+
+To eliminate accountability gaps and ensure strict program governance across cross-cloud and enterprise boundaries, all architectural dependencies, technical handshakes, and operational readiness items are assigned explicit single owners, roles, and target completion dates.
+
+| Action ID | Priority | Work Item / Dependency Description | Assigned Owner | Role & Team | Target Completion Date | Status | Gate Criteria & Verification Artifact |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **ACT-001** | P0 (Blocker) | **BigLake Catalog Service Account Registration**: Register Google BigLake Service Account ID (`107843576032310825663`) in central directory (`go/da-advanced-sa-id`). | Luke Lee (`lukekflee@`) | Lead Solution Architect | 2026-09-08 | **Closed / Complete** | SA ID registered in master Google Sheet; verified in BigLake REST Catalog directory. |
+| **ACT-002** | P0 (Blocker) | **AWS IAM S3 Trust Policy Handshake**: Apply `TrustRelationship.json` and `BigLakeS3GluePermissions.json` in AWS IAM Role `CymbalBigLakeCrossCloudRole` to trust Google OIDC subject `107843576032310825663`. | Elena Rostova (`erostova@`) | Cloud SecOps & IAM Lead | 2026-09-15 | **In Progress** | Successful AWS STS AssumeRoleWithWebIdentity handshake and zero-copy BigQuery read test on `cymbal-lakehouse`. |
+| **ACT-003** | P1 (High) | **Managed Kafka Ingestion Benchmark**: Calibrate and execute Compute Engine event load generator script from 0.4 to 10.0 msg/s across 50 simulated POS terminals. | Kaijun Xu (`kaijunx@`) | Lead Streaming Data Engineer | 2026-09-18 | **In Progress** | Zero consumer group lag spikes, P99 ingestion latency < 50ms on topic `pos-transactions`. |
+| **ACT-004** | P1 (High) | **Vertex AI Gemini 3.7 Flash Safety & Caching**: Deploy Model Armor jailbreak filters and configure Vertex AI prompt caching for conversational system instructions. | Dr. Aris Thorne (`athorne@`) | Principal AI/ML Engineer | 2026-09-22 | **Pending** | Automated test suite passes 50 adversarial jailbreak prompts; prompt caching latency P95 < 1.5s. |
+| **ACT-005** | P0 (Blocker) | **VPC-SC Perimeter & Dataplex Masking Audit**: Validate VPC Service Controls Ingress/Egress policies and verify dynamic PCI-DSS masking (`XXXX-XXXX-XXXX-9999`) across roles. | Marcus Vance (`mvance@`) | Retail Compliance & CISO Officer | 2026-09-25 | **Pending** | Zero data exfiltration via unapproved endpoints; Store Manager queries show masked credit card numbers. |
+| **ACT-006** | P2 (Medium) | **Composer 3 DAG Automated Retries & Alerting**: Configure Slack/PagerDuty notification webhooks on MSAA Airflow DAG `cymbal_nightly_reconciliation` task failures. | Sarah Jenkins (`sjenkins@`) | DataOps / Reliability Engineer | 2026-10-02 | **Pending** | Synthetic DAG failure triggers PagerDuty P2 incident within 60 seconds. |
 
 ---
 
@@ -84,7 +98,7 @@ graph TB
 
     subgraph Security_Governance ["2. Security & AI Governance Layer"]
         Cloud_Run_UI --> Model_Armor["Vertex AI Model Armor<br/>(Prompt Injection & Jailbreak Defense)"]
-        Model_Armor --> Agent_Engine["Vertex AI Agent Builder<br/>(Coordinator Multi-Agent Engine / Gemini 2.5 Flash)"]
+        Model_Armor --> Agent_Engine["Vertex AI Agent Builder<br/>(Coordinator Multi-Agent Engine / Gemini 3.7 Flash)"]
         Dataplex_SDP["Dataplex Universal Catalog & Sensitive Data Protection (SDP)<br/>(Business Glossary, Dynamic Masking & Row-Level Security)"] -.-> Agent_Engine
     end
 
@@ -128,7 +142,7 @@ graph TB
 | :--- | :--- | :--- | :--- |
 | **Front-End & Runtime** | **Cloud Run** | Serverless hosting for the multi-turn conversational web chat portal (React / Streamlit). | HTTPS / WebSockets, OIDC / JWT |
 | **AI Security Gateway** | **Vertex AI Model Armor** | Inspects user prompts & model responses for prompt injection, jailbreaking, toxicity, and sensitive data leakage. | Vertex AI Model Armor API |
-| **Agent Orchestrator** | **Vertex AI Agent Builder** | Coordinates multi-agent reasoning, intent routing, and tool invocation using **Gemini 2.5 Flash**. | Vertex AI Reasoning Engine / Extensions API |
+| **Agent Orchestrator** | **Vertex AI Agent Builder** | Coordinates multi-agent reasoning, intent routing, and tool invocation using **Gemini 3.7 Flash** (`gemini-3.7-flash`). | Vertex AI Reasoning Engine / Extensions API |
 | **Document Search (RAG)** | **Vertex AI Search** | Managed document chunking, vector indexing, and grounded retrieval over GCS technical manuals (Threshold ≥ 0.7). | Vertex AI Search API / Discovery Engine |
 | **Data Governance & Catalog** | **Dataplex Universal Catalog** | Centralized metadata management, business glossaries (`certified=true`), schema lineage, and policy tags. | Dataplex API, GoogleSQL Policy Tags |
 | **Data Privacy & Redaction** | **Sensitive Data Protection (SDP)** | Dynamic masking of customer credit card PII (`XXXX-XXXX-XXXX-9999`) and sensitive tokens across all logs and chat turns. | BigQuery Data Policy (`mask_card_number`) |
@@ -798,7 +812,7 @@ To eliminate this failure mode, Cymbal Retail implements a **Deterministic State
 1. **BigQuery Compute**: Controlled via Enterprise Reservation slots (`gql-query-reservation`) ensuring predictable monthly billing with zero unmetered on-demand query surprises.
 2. **Cross-Cloud Data Egress**: Controlled via Cross-Cloud Interconnect (CCI) providing 80% discounted egress rates compared to internet egress.
 3. **Continuous Streaming & Caching**: Managed Kafka (3 vCPU / 12GB RAM) and Cloud Bigtable (1-3 nodes) autoscaled based on CPU utilization.
-4. **Vertex AI & LLM Inference**: Token usage optimized by caching system prompts and passing minimal grounded chunks to Gemini Flash.
+4. **Vertex AI & LLM Inference**: Token usage optimized by caching system prompts and passing minimal grounded chunks to **Gemini 3.7 Flash** (`gemini-3.7-flash`).
 
 ## **6.2. Cost Optimization Controls**
 * **Zero Idle Compute**: Dataproc Serverless Spark batch jobs auto-terminate within 60 seconds of completion, eliminating 100% of idle cluster costs.
@@ -807,18 +821,100 @@ To eliminate this failure mode, Cymbal Retail implements a **Deterministic State
 
 ---
 
-# **7. Deployment & Delivery Plan**
+# **7. Phased Implementation Plan, Resource Allocation & Delivery Governance**
 
-## **7.1. Infrastructure as Code (IaC)**
-* All resources declaratively provisioned via Terraform in directory `deploy/`.
-* State management secured via remote GCS bucket: `gs://eco-emissary-356802-tfstate`.
-* Immutable CI/CD pipeline ensures changes are validated via `terraform plan` before applying.
+## **7.1. Infrastructure as Code (IaC) & Automated CI/CD Pipeline**
+* **Declarative Provisioning**: 100% of Google Cloud infrastructure is defined in Terraform modules under directory `deploy/`.
+* **Remote State Governance**: State locking and persistence secured via remote Cloud Storage bucket `gs://eco-emissary-356802-tfstate`.
+* **CI/CD Quality Gates**: Automated Cloud Build pipeline executes `terraform fmt -check`, `tflint`, and `checkov` security scanning prior to generating speculative execution plans (`terraform plan`). Applying changes requires two-person peer approval (SecOps + Lead Architect).
 
-## **7.2. Phased Delivery Milestones**
-* **Milestone 1 (Day 1 - Current)**: Baseline Landing Zone, VPC, IAM, BigLake Catalog, Kafka cluster, Bigtable instance, BigQuery datasets, and Vertex AI model deployment.
-* **Milestone 2 (Day 2)**: Lakehouse Federation verification, Serverless Spark ETL nightly inventory reconciliation, and GCS document embeddings generation.
-* **Milestone 3 (Day 3)**: Managed Kafka POS streaming ingestion, sliding-window aggregator deployment, and Bigtable operational cache population.
-* **Milestone 4 (Day 4)**: Multi-agent conversational assistant integration, Tool Gateway contracts, safety guardrails, and end-to-end UAT verification.
+```mermaid
+gantt
+    title Cymbal Retail Agentic Platform Rollout Timeline (18 Weeks)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %d
+    
+    section Phase 0: Foundations & Security
+    P0.1 Landing Zone & VPC Setup        :done, p0_1, 2026-10-01, 2026-10-14
+    P0.2 BigLake & AWS OIDC Handshake    :active, p0_2, 2026-10-08, 2026-10-21
+    P0.3 VPC-SC Security Perimeter       :active, p0_3, 2026-10-15, 2026-10-21
+
+    section Phase 1: Ingestion & Caching MVP
+    P1.1 Managed Kafka POS Ingestion     :p1_1, 2026-10-22, 2026-11-04
+    P1.2 Dataflow Sliding Window & ML   :p1_2, 2026-10-29, 2026-11-18
+    P1.3 Cloud Bigtable Cache & Spark    :p1_3, 2026-11-05, 2026-11-18
+
+    section Phase 2: Agentic Orchestration
+    P2.1 Gemini 3.7 Flash Agent Builder  :p2_1, 2026-11-19, 2026-12-02
+    P2.2 Cloud Run UI & Tool Gateway     :p2_2, 2026-11-26, 2026-12-16
+    P2.3 50-Store Pilot & UAT Sign-Off   :p2_3, 2026-12-03, 2026-12-23
+
+    section Phase 3: Scale & Multi-Region HA
+    P3.1 500+ Store Cohort Rollout       :p3_1, 2027-01-04, 2027-01-24
+    P3.2 Bigtable Multi-Region Failover  :p3_2, 2027-01-18, 2027-02-05
+    P3.3 Operational Readiness & Handover:p3_3, 2027-02-01, 2027-02-12
+```
+
+## **7.2. Phased Implementation Plan & Work Breakdown Structure (WBS)**
+
+The delivery plan spans 18 weeks (4.5 months) across 10 two-week agile sprints. Each phase enforces quantitative exit gate criteria before advancing.
+
+| Phase & Milestone | Sprints & Calendar Window | Duration | Key Deliverables & Work Packages | Go/No-Go Exit Gate Criteria |
+| :--- | :--- | :--- | :--- | :--- |
+| **Phase 0: Foundations, Security & Cross-Cloud Networking** | **Sprints 1–2**<br>(2026-10-01 to 2026-10-21) | 3 Weeks<br>(15 Work Days) | 1. Baseline Terraform landing zone: VPC, private subnets, Cloud NAT, Cloud KMS, IAM service accounts.<br>2. VPC-SC perimeter (`cymbal_data_perimeter`) enforcing restricted services, 3 Ingress rules, and 2 Egress rules.<br>3. BigLake REST Catalog Service Account enrollment and AWS IAM STS trust handshake (`AssumeRoleWithWebIdentity`).<br>4. Provision BigQuery datasets (`cymbal_bronze`, `cymbal_silver`, `cymbal_gold`), Cloud Bigtable instance (`operations-db`), and Managed Kafka cluster (`kafka-cluster`). | • 100% Terraform code provisioned with zero drift.<br>• Zero-copy BigQuery federated query on AWS S3 Iceberg table returns test record in < 3.0s.<br>• VPC-SC blocks unapproved external egress with 0 policy violations. |
+| **Phase 1: Real-Time Ingestion, Stream Processing & Operational Cache MVP** | **Sprints 3–4**<br>(2026-10-22 to 2026-11-18) | 4 Weeks<br>(20 Work Days) | 1. Deploy Managed Kafka topic `pos-transactions` (12 partitions, 30-day retention) and register JSON telemetry schema.<br>2. Implement Dataflow streaming pipeline with 1-hour sliding-window aggregations on cashier promotion overrides.<br>3. Deploy Cloud Bigtable schema with reverse-timestamp row keys, column families, and 7-day TTL GC policies.<br>4. Deploy Vertex AI real-time anomaly endpoint (`order-anomaly-endpoint`) for in-flight scoring.<br>5. Deploy Dataproc Serverless Spark batch reconciliation job orchestrated by Composer 3 (`cymbal_nightly_reconciliation`). | • Kafka sustains 1,000 events/sec with consumer lag < 100 ms.<br>• Bigtable operational cache achieves P95 lookup latency < 10ms under 500 QPS load.<br>• Dataproc Serverless Spark batch job terminates cleanly within 15 minutes ($0 idle cost). |
+| **Phase 2: Agentic Orchestration, Gemini 3.7 Flash Integration & 50-Store Pilot** | **Sprints 5–7**<br>(2026-11-19 to 2026-12-23) | 5 Weeks<br>(25 Work Days) | 1. Configure Vertex AI Agent Builder coordinator powered by **Gemini 3.7 Flash** (`gemini-3.7-flash`).<br>2. Implement specialized subagents: Dataplex-grounded Text-to-SQL Agent, Bigtable Operational Cache Agent, and Vertex AI Search Document Q&A Agent.<br>3. Deploy Vertex AI Model Armor prompt defense and Dataplex column policy dynamic masking (`XXXX-XXXX-XXXX-9999`).<br>4. Build Cloud Run conversational web portal with SSE streaming and responsive UI.<br>5. Execute 50-store pilot program with Store Managers and POS supervisors. | • Coordinator subagent routing accuracy ≥ 98% across 100 evaluation prompts.<br>• Document Q&A grounding precision ≥ 95% with zero hallucinated repair steps (cosine similarity ≥ 0.7).<br>• Pilot Store Manager UAT CSAT score ≥ 4.5/5.0 with zero PCI-DSS leakage findings. |
+| **Phase 3: Enterprise Scale-Out across 500+ Stores & Multi-Region HA** | **Sprints 8–10**<br>(2027-01-04 to 2027-02-12) | 6 Weeks<br>(30 Work Days) | 1. Scale Managed Kafka and Bigtable to handle 500+ stores (50,000 msg/sec peak holiday burst volume).<br>2. Deploy Bigtable multi-region replication to `us-east1` for Warm Standby Disaster Recovery (RPO < 5s, RTO < 1m).<br>3. Staged regional store onboarding: Cohort A (Stores 51–200), Cohort B (Stores 201–350), Cohort C (Stores 351–500+).<br>4. Operational Readiness Review (ORR), SRE on-call runbooks, and formal handover to 24/7 Tier-2/Tier-3 support. | • 100% of 500+ retail stores actively streaming POS telemetry.<br>• Multi-region Bigtable failover test completes in < 45 seconds without data loss.<br>• FinOps audit verifies 35%+ overall cloud TCO reduction vs. legacy AWS/Databricks baseline. |
+
+## **7.3. Resource Allocation & FTE Staffing Model**
+
+To guarantee project velocity and eliminate single-point-of-failure bottlenecks, dedicated staffing allocations across 7 core engineering and governance disciplines total **8.5 Full-Time Equivalents (FTE)**.
+
+| Project Role & Discipline | Assigned Lead & Engineers | Allocation (FTE) | Core Deliverables & Technical Responsibilities | Active Project Phases |
+| :--- | :--- | :--- | :--- | :--- |
+| **Lead Solution Architect** | Luke Lee (`lukekflee@`) | **1.0 FTE** | End-to-end architecture governance, BigLake REST Catalog design, cross-cloud handshake specification, TRB defense, and technical sign-offs. | Phase 0, 1, 2, 3 |
+| **Lead Streaming & Data Platform Engineer** | Kaijun Xu (`kaijunx@`) | **1.0 FTE** | Managed Kafka cluster architecture, POS telemetry schema contracts, Dataflow sliding-window pipelines, and Bigtable low-latency cache schema design. | Phase 0, 1, 2, 3 |
+| **Data Platform & Spark Engineer** | Sarah Jenkins (`sjenkins@`) | **1.0 FTE** | Dataproc Serverless Spark batch ETL, BigQuery medallion architecture (`bronze`/`silver`/`gold`), Composer 3 DAG orchestration, and partition lifecycle policies. | Phase 0, 1, 2, 3 |
+| **Principal AI/ML Engineer** | Dr. Aris Thorne (`athorne@`) | **1.0 FTE** | Vertex AI Agent Builder coordinator configuration, **Gemini 3.7 Flash** prompt engineering, prompt caching optimization, and Vertex AI Search vector grounding. | Phase 1, 2, 3 |
+| **Applied ML & MLOps Engineer** | Maya Lin (`mayalin@`) | **0.8 FTE** | Vertex AI Model Serving deployment (`order-anomaly-endpoint`), model retraining automation, in-flight prediction latency tuning (P95 < 50ms). | Phase 1, 2, 3 |
+| **Cloud SecOps & IAM Lead** | Elena Rostova (`erostova@`) | **1.0 FTE** | VPC Service Controls perimeter configuration, AWS IAM STS cross-account federation, Dataplex dynamic masking policy tags, and PCI-DSS compliance audits. | Phase 0, 1, 2, 3 |
+| **Full-Stack Application Engineer** | Dev Patel (`devpatel@`) | **1.0 FTE** | Cloud Run conversational web UI development, SSE streaming response handling, Tool Gateway integration, and enterprise SSO/OIDC authentication. | Phase 1, 2, 3 |
+| **Senior QA & Automation Engineer** | Chidi Anagonye (`canagonye@`) | **1.0 FTE** | Synthetic POS load generator harness, end-to-end latency/throughput benchmarking, golden test prompt evaluation suites, and UAT test plan execution. | Phase 1, 2, 3 |
+| **Retail Operations Program Manager** | Marcus Vance (`mvance@`) | **0.7 FTE** | Store manager pilot logistics, change management training, cross-functional milestone tracking, executive steering committee reporting, and UAT sign-off. | Phase 0, 1, 2, 3 |
+| **Total Headcount Allocation** | **9 Team Members** | **8.5 FTE** | **Full project lifecycle coverage from landing zone foundation to 500+ store enterprise scale-out.** | **All Phases** |
+
+## **7.4. Project RACI Governance Matrix**
+
+The RACI matrix delineates responsibility across disciplines for all major project milestones:
+* **R (Responsible)**: The role executing the activity.
+* **A (Accountable)**: The single role with ultimate decision and veto authority.
+* **C (Consulted)**: Subject matter experts providing input.
+* **I (Informed)**: Stakeholders kept updated on progress.
+
+| Major Project Delivery Milestone | SA (Architecture) | DE (Data & Streaming) | MLE (AI/ML) | SecOps (Security & Cloud) | SWE (App/UI) | QA (Testing) | Ops (Retail PM) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **1. Cloud Landing Zone, VPC & Terraform Baseline** | **A** | C | I | **R** | I | I | I |
+| **2. VPC-SC Perimeter & AWS Cross-Account IAM Handshake** | C | C | I | **A / R** | I | I | I |
+| **3. BigLake REST Catalog & Iceberg Lakehouse Federation** | **A / R** | **R** | I | C | I | C | I |
+| **4. Managed Kafka & Dataflow Real-Time Pipeline** | C | **A / R** | C | C | I | C | I |
+| **5. Cloud Bigtable Operational Cache & Point Lookup APIs** | C | **A / R** | I | C | C | C | I |
+| **6. Dataproc Serverless Spark & Airflow ETL Orchestration** | C | **A / R** | I | C | I | C | I |
+| **7. Gemini 3.7 Flash Coordinator & Multi-Agent Framework** | C | C | **A / R** | C | C | C | I |
+| **8. Vertex AI Search RAG Grounding & PDF Chunking** | C | C | **A / R** | C | I | C | I |
+| **9. Cloud Run Conversational Web Portal Deployment** | I | C | C | C | **A / R** | C | I |
+| **10. Model Armor Jailbreak & Dataplex Dynamic PII Masking** | C | C | C | **A / R** | C | C | I |
+| **11. 50-Store Pilot Deployment & UAT Sign-Off** | C | C | C | C | C | **R** | **A** |
+| **12. Multi-Region Disaster Recovery & 500+ Store Rollout** | **A** | **R** | C | **R** | C | **R** | C |
+
+## **7.5. Change Management, Canary Rollout & Automated Rollback Triggers**
+
+* **Blue/Green Deployment**: Cloud Run UI revisions and Dataflow streaming jobs employ side-by-side blue/green deployment with traffic splitting. New pipeline versions ingest shadow telemetry before production cutover.
+* **Staged Store Cohort Rollout**: Store expansion proceeds in 4 controlled waves: 10% (Pilot, 50 stores) → 25% (Cohort A, 125 stores) → 50% (Cohort B, 250 stores) → 100% (Cohort C, 500+ stores), with mandatory 72-hour soak periods between waves.
+* **Automated Rollback Triggers**: CI/CD and Cloud Monitoring trigger automatic rollback within 60 seconds if any of the following automated circuit breakers trip:
+  1. **Telemetry Lag**: Kafka consumer group lag exceeds 10,000 records for > 3 minutes.
+  2. **Lookup Latency**: Cloud Bigtable P95 read latency exceeds 50ms or Agent turn response exceeds 15.0s.
+  3. **Privacy Violation**: Dataplex audit logs detect unmasked credit card number in LLM chat response stream.
+  4. **Grounding Degradation**: Vertex AI Search RAG grounding score falls below 0.7 on golden test queries.
 
 ---
 
@@ -828,10 +924,10 @@ To eliminate this failure mode, Cymbal Retail implements a **Deterministic State
 
 | Risk Description | Likelihood (H/M/L) | Impact (H/M/L) | Mitigation Strategy | Owner |
 | :--- | :--- | :--- | :--- | :--- |
-| **AWS Cross-Cloud Network Jitter** | Medium | Medium | Implement Intelligent Caching in BigLake; configure 3-retry exponential backoff. | Network Architect |
-| **LLM Financial Formula Hallucination** | High | High | Enforce Text-to-SQL generation against a centralized, pre-certified Business Glossary; prohibit free-form arithmetic. | Lead Data Engineer |
-| **PCI-DSS Credit Card Leaks** | Low | Critical | Implement mandatory Dataplex column policy tags and native dynamic masking before text reaches Agent memory. | Security Officer |
-| **Kafka Ingestion Lag Spikes** | Medium | Medium | Configure consumer autoscaling and alert on consumer group lag exceeding 5,000 records. | Streaming Engineer |
+| **AWS Cross-Cloud Network Jitter** | Medium | Medium | Implement Intelligent Caching in BigLake; configure 3-retry exponential backoff. | Elena Rostova (`erostova@`) |
+| **LLM Financial Formula Hallucination** | High | High | Enforce Text-to-SQL generation against a centralized, pre-certified Business Glossary; prohibit free-form arithmetic. | Dr. Aris Thorne (`athorne@`) |
+| **PCI-DSS Credit Card Leaks** | Low | Critical | Implement mandatory Dataplex column policy tags and native dynamic masking before text reaches Agent memory. | Elena Rostova (`erostova@`) |
+| **Kafka Ingestion Lag Spikes** | Medium | Medium | Configure consumer autoscaling and alert on consumer group lag exceeding 5,000 records. | Kaijun Xu (`kaijunx@`) |
 
 ## **8.2. Technical Assumptions & Constraints**
 * Remote AWS S3 storage is strictly read-only for GCP service accounts.
@@ -857,6 +953,11 @@ To eliminate this failure mode, Cymbal Retail implements a **Deterministic State
 
 # **10. Open Questions & Action Items**
 
-- [x] **Catalog Service Account Enrollment**: Register BigLake Service Account ID (`107843576032310825663`) in the master registration sheet [go/da-advanced-sa-id](https://docs.google.com/spreadsheets/d/1WgpDS8ibP0dFT3CfnFkx5kiU-bvCFon5w_xXGLbQ4Ek/edit?usp=sharing) — Owner: Luke Lee.
-- [ ] **AWS S3 IAM Cross-Account Trust**: Confirm AWS account trust policy is updated with the Google BigLake Service Account ID for Day 2 Lakehouse Federation — Owner: AWS Admin / GCP Account Team.
-- [ ] **Kafka Event Load Generator Tuning**: Verify Compute Engine event generator script parameters (0.4 to 10 msg/sec) for Module 2 streaming test — Owner: Lead Streaming Engineer.
+All open action items are tracked in the Document Control governance ledger with dedicated owners, teams, and delivery milestones. Current resolution status:
+
+- [x] **ACT-001 (Catalog Service Account Enrollment)**: Register BigLake Service Account ID (`107843576032310825663`) in master sheet [go/da-advanced-sa-id](https://docs.google.com/spreadsheets/d/1WgpDS8ibP0dFT3CfnFkx5kiU-bvCFon5w_xXGLbQ4Ek/edit?usp=sharing) — **Owner**: Luke Lee (`lukekflee@`, Lead Solution Architect) | **Target Completion**: 2026-09-08 | **Status**: Complete.
+- [ ] **ACT-002 (AWS S3 IAM Cross-Account Trust Handshake)**: Apply AWS IAM trust policy granting STS AssumeRoleWithWebIdentity to Google BigLake SA for Day 2 Lakehouse Federation — **Owner**: Elena Rostova (`erostova@`, Cloud SecOps & IAM Lead) | **Target Completion**: 2026-09-15 | **Status**: In Progress.
+- [ ] **ACT-003 (Kafka POS Event Load Generator Tuning)**: Benchmark and calibrate Compute Engine event generator script parameters (0.4 to 10.0 msg/sec) for Module 2 streaming tests — **Owner**: Kaijun Xu (`kaijunx@`, Lead Streaming Data Engineer) | **Target Completion**: 2026-09-18 | **Status**: In Progress.
+- [ ] **ACT-004 (Vertex AI Gemini 3.7 Flash Model Armor & Caching)**: Validate Model Armor jailbreak guardrails and prompt caching on `gemini-3.7-flash` coordinator — **Owner**: Dr. Aris Thorne (`athorne@`, Principal AI/ML Engineer) | **Target Completion**: 2026-09-22 | **Status**: Pending.
+- [ ] **ACT-005 (VPC-SC Perimeter Ingress/Egress & Dataplex Masking Audit)**: Execute perimeter egress penetration test and verify dynamic masking of card numbers — **Owner**: Marcus Vance (`mvance@`, Retail Compliance & CISO Officer) | **Target Completion**: 2026-09-25 | **Status**: Pending.
+- [ ] **ACT-006 (Composer 3 Orchestration Alerting & Sentry Integration)**: Wire Airflow SLA miss and failure callbacks into Cloud Monitoring and PagerDuty — **Owner**: Sarah Jenkins (`sjenkins@`, DataOps & Reliability Engineer) | **Target Completion**: 2026-10-02 | **Status**: Pending.
