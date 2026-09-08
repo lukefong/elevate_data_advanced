@@ -342,20 +342,385 @@ For bucket `eco-emissary-356802-module1-bucket` (storing POS hardware manuals an
 * **Age > 365 Days**: Transitions archival copies to **Archive Storage** ($0.0012/GB/month).
 * **Noncurrent Object Versions**: Permanently deleted after 14 days to prevent stale document accumulation.
 
+### **4.1.4. Real-Time POS Transaction Telemetry JSON Schema Contract (`pos-transactions`)**
+
+To prevent downstream data engineering ambiguity, Dataflow pipeline deserialization errors, and schema inference drift, all POS terminals across the 50 storefronts must emit strictly validated JSON payloads adhering to the following **JSON Schema (Draft-07)** specification:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "POSTransactionTelemetryEvent",
+  "description": "Real-time checkout event emitted from in-store POS terminals to Managed Service for Apache Kafka (topic: pos-transactions)",
+  "type": "object",
+  "required": [
+    "transaction_id",
+    "timestamp",
+    "store_id",
+    "pos_terminal_id",
+    "cashier_id",
+    "customer_id",
+    "basket",
+    "total_amount",
+    "payment_details",
+    "override_details"
+  ],
+  "properties": {
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^TXN-[0-9]{8}-[0-9]{7}$",
+      "description": "Unique transaction identifier with date and sequence (e.g., TXN-20260312-0015811)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of checkout completion (e.g., 2026-03-12T14:22:18.124Z)"
+    },
+    "store_id": {
+      "type": "string",
+      "pattern": "^STORE_[0-9]{3}$",
+      "description": "Store location identifier (e.g., STORE_041)"
+    },
+    "pos_terminal_id": {
+      "type": "string",
+      "pattern": "^TERM_[0-9]{2}$",
+      "description": "Physical POS checkout lane terminal ID (e.g., TERM_04)"
+    },
+    "cashier_id": {
+      "type": "string",
+      "pattern": "^CASH_[0-9]{4}$",
+      "description": "Operating cashier employee identifier (e.g., CASH_1190)"
+    },
+    "customer_id": {
+      "type": "string",
+      "pattern": "^CUST_[0-9]{5}$",
+      "description": "Loyalty customer account identifier (e.g., CUST_02598)"
+    },
+    "basket": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Collection of line items purchased in this transaction",
+      "items": {
+        "type": "object",
+        "required": [
+          "item_id",
+          "item_name",
+          "product_category",
+          "quantity",
+          "unit_price",
+          "discount_applied_pct",
+          "subtotal"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "pattern": "^prod_[0-9]{4}$",
+            "description": "SKU catalog identifier (e.g., prod_3075)"
+          },
+          "item_name": {
+            "type": "string",
+            "description": "Human-readable item title"
+          },
+          "product_category": {
+            "type": "string",
+            "enum": ["AUDIO", "COMPUTING", "MOBILE", "ACCESSORIES", "HOME_APPLIANCES"]
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "unit_price": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "discount_applied_pct": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 100.0
+          },
+          "subtotal": {
+            "type": "number",
+            "minimum": 0.0
+          }
+        }
+      }
+    },
+    "total_amount": {
+      "type": "number",
+      "minimum": 0.0,
+      "description": "Net transaction value including applicable sales taxes"
+    },
+    "payment_details": {
+      "type": "object",
+      "required": ["payment_type", "masked_card_number", "auth_approval_code"],
+      "properties": {
+        "payment_type": {
+          "type": "string",
+          "enum": ["CREDIT_CARD", "DEBIT_CARD", "GIFT_CARD", "CASH", "MOBILE_WALLET"]
+        },
+        "masked_card_number": {
+          "type": "string",
+          "pattern": "^(XXXX-XXXX-XXXX-[0-9]{4}|N/A)$",
+          "description": "Pre-masked PCI-DSS compliant credit card representation"
+        },
+        "auth_approval_code": {
+          "type": "string",
+          "description": "Bank authorization code (e.g., AUTH_884920)"
+        }
+      }
+    },
+    "override_details": {
+      "type": "object",
+      "required": ["override_flag", "supervisor_id", "override_reason", "override_discount_amount"],
+      "properties": {
+        "override_flag": {
+          "type": "boolean",
+          "description": "True if cashier manually applied a discount override outside approved catalog promotions"
+        },
+        "supervisor_id": {
+          "type": ["string", "null"],
+          "pattern": "^SUPV_[0-9]{4}$",
+          "description": "Approving supervisor ID if override exceeded cashier limit"
+        },
+        "override_reason": {
+          "type": ["string", "null"],
+          "enum": [null, "DAMAGED_PACKAGING", "PRICE_MATCH", "CUSTOMER_SATISFACTION", "SYSTEM_GLITCH"]
+        },
+        "override_discount_amount": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Monetary value of the manual discount applied"
+        }
+      }
+    }
+  }
+}
+```
+
+#### **Production Payload Example**
+```json
+{
+  "transaction_id": "TXN-20260312-0015811",
+  "timestamp": "2026-03-12T14:22:18.124Z",
+  "store_id": "STORE_041",
+  "pos_terminal_id": "TERM_04",
+  "cashier_id": "CASH_1190",
+  "customer_id": "CUST_02598",
+  "basket": [
+    {
+      "item_id": "prod_3075",
+      "item_name": "Pro Wireless Noise-Canceling Headphones",
+      "product_category": "AUDIO",
+      "quantity": 1,
+      "unit_price": 249.99,
+      "discount_applied_pct": 20.0,
+      "subtotal": 199.99
+    }
+  ],
+  "total_amount": 215.99,
+  "payment_details": {
+    "payment_type": "GIFT_CARD",
+    "masked_card_number": "N/A",
+    "auth_approval_code": "AUTH_773192"
+  },
+  "override_details": {
+    "override_flag": true,
+    "supervisor_id": "SUPV_0042",
+    "override_reason": "CUSTOMER_SATISFACTION",
+    "override_discount_amount": 50.00
+  }
+}
+```
+
 ---
 
 ## **4.2. Security, Privacy & Data Governance**
 
-1. **Role-Based & Row-Level Access Control (RLS)**:
-   * Delegated User Identity Tokens pass via gRPC / HTTP headers (`X-Goog-Authenticated-User-Email`).
-   * Row-level security filters applied automatically: Store Managers can only query records where `store_id = SESSION_USER_STORE_ID()`.
-2. **PCI-DSS Dynamic Data Masking**:
-   * Column-level policy tag `projects/eco-emissary-356802/locations/us-central1/taxonomies/.../categories/cymbal_pii` attached to `card_number`.
-   * Unauthorized personas (Store Managers, Sales Associates, LLM Tool Prompts) execute via custom routine `mask_card_number`, receiving only masked values: `XXXX-XXXX-XXXX-9999`.
-   * Only credentialed Security Auditors with `roles/bigquerydatapolicy.maskedReader` access raw credit card numbers.
-3. **AI Guardrails & Grounding Validation**:
-   * Incoming user prompts pass through Vertex AI Model Armor to intercept jailbreak attempts and prompt injection attacks.
-   * RAG outputs must adhere to a strict minimum vector similarity score of 0.7; any chunk below this threshold triggers an immediate refusal to prevent hallucinated advice.
+### **4.2.1. Role-Based & Row-Level Access Control (RLS)**
+* Delegated User Identity Tokens pass via gRPC / HTTP headers (`X-Goog-Authenticated-User-Email`).
+* Row-level security filters applied automatically: Store Managers can only query records where `store_id = SESSION_USER_STORE_ID()`.
+
+### **4.2.2. PCI-DSS Dynamic Data Masking**
+* Column-level policy tag `projects/eco-emissary-356802/locations/us-central1/taxonomies/.../categories/cymbal_pii` attached to `card_number`.
+* Unauthorized personas (Store Managers, Sales Associates, LLM Tool Prompts) execute via custom routine `mask_card_number`, receiving only masked values: `XXXX-XXXX-XXXX-9999`.
+* Only credentialed Security Auditors with `roles/bigquerydatapolicy.maskedReader` access raw credit card numbers.
+
+### **4.2.3. AI Guardrails & Grounding Validation**
+* Incoming user prompts pass through Vertex AI Model Armor to intercept jailbreak attempts and prompt injection attacks.
+* RAG outputs must adhere to a strict minimum vector similarity score of 0.7; any chunk below this threshold triggers an immediate refusal to prevent hallucinated advice.
+
+### **4.2.4. VPC Service Controls (VPC-SC) Perimeter & Detailed Ingress/Egress Policies**
+
+To protect sensitive retail transaction data, PII, and proprietary ML endpoints from data exfiltration, unauthorized network access, and lateral movement, project `eco-emissary-356802` is enclosed in a fully managed **VPC Service Controls (VPC-SC)** security perimeter:
+
+* **Perimeter Name**: `accessPolicies/108492019/servicePerimeters/cymbal_retail_secure_perimeter`
+* **Enforced Project**: `projects/89512879998` (`eco-emissary-356802`)
+* **Restricted Services List**:
+  * `bigquery.googleapis.com` (Analytics, Vector Search & Lakehouse)
+  * `storage.googleapis.com` (Unstructured PDF manuals & BigLake Parquet tables)
+  * `bigtable.googleapis.com` (Low-latency operational cache)
+  * `managedkafka.googleapis.com` (POS event broker)
+  * `aiplatform.googleapis.com` (Vertex AI Agent Builder, Model Serving, Model Armor)
+  * `dataplex.googleapis.com` (Universal Catalog & Governance)
+  * `composer.googleapis.com` (Managed Service for Apache Airflow)
+  * `dataproc.googleapis.com` (Dataproc Serverless Spark)
+
+```mermaid
+graph LR
+    subgraph External_Untrusted ["External / Corp Network"]
+        POS_VPN["Store POS Terminals<br/>(10.128.0.0/16, 10.140.0.0/16)"]
+        Chat_User["Store Manager Web Client<br/>(BeyondCorp / Context-Aware)"]
+        AWS_Cloud["AWS S3 Remote Lakehouse<br/>(Cross-Cloud VPC Endpoint)"]
+    end
+
+    subgraph VPCSC_Perimeter ["VPC-SC Security Perimeter: cymbal_retail_secure_perimeter"]
+        direction TB
+        Ingress_Gate["VPC-SC Ingress Policy"]
+        Egress_Gate["VPC-SC Egress Policy"]
+        
+        subgraph Protected_Resources ["Protected GCP Data Services"]
+            Kafka["Managed Kafka"]
+            Dataflow["Dataflow Engine"]
+            BQ["BigQuery Studio"]
+            BT["Cloud Bigtable"]
+            Vertex["Vertex AI & Model Armor"]
+            GCS["Cloud Storage Bucket"]
+        end
+        
+        Ingress_Gate --> Kafka
+        Ingress_Gate --> Vertex
+        Ingress_Gate --> BQ
+        BQ --> Egress_Gate
+    end
+
+    POS_VPN -->|"Ingress Rule 1<br/>(Allowed Corp CIDR)"| Ingress_Gate
+    Chat_User -->|"Ingress Rule 2<br/>(Authorized User Identity)"| Ingress_Gate
+    Egress_Gate -->|"Egress Rule 1<br/>(BigLake REST Catalog via CCI)"| AWS_Cloud
+```
+
+#### **Detailed Ingress Policies**
+1. **Ingress Rule 1: Store POS Telemetry Ingestion to Managed Kafka**:
+   * **From**: Sources = Network CIDR ranges `10.128.0.0/16` and `10.140.0.0/16` (Private Interconnect/Cloud VPN from 50 store locations) or Access Level `al_pos_terminal_network`.
+   * **To**: Target Project = `projects/89512879998`, Target Service = `managedkafka.googleapis.com`, Methods = `["*"]` (Produces on Port 9092 via PSC endpoints).
+2. **Ingress Rule 2: Store Manager Conversational Chat Portal**:
+   * **From**: Identity = Service Account `cymbal-sa-data@eco-emissary-356802.iam.gserviceaccount.com` (Cloud Run runtime identity) and Users satisfying Access Level `al_corp_beyondcorp_device`.
+   * **To**: Target Project = `projects/89512879998`, Target Service = `aiplatform.googleapis.com`, Methods = `["google.cloud.aiplatform.v1.PredictionService.*", "google.cloud.discoveryengine.v1.*"]`.
+3. **Ingress Rule 3: Data Lead & SecOps Administration**:
+   * **From**: Identities = `sa-data-lead@eco-emissary-356802.iam.gserviceaccount.com`, `admin@lukekflee.altostrat.com`.
+   * **To**: Target Project = `projects/89512879998`, Target Services = `bigquery.googleapis.com`, `dataplex.googleapis.com`, `composer.googleapis.com`.
+
+#### **Detailed Egress Policies**
+1. **Egress Rule 1: Cross-Cloud Lakehouse Federation to AWS S3 & Glue**:
+   * **From**: Identity = `blirc-89512879998-m26clzth@gcp-sa-biglakerestcatalog.iam.gserviceaccount.com` (BigLake Service Account, Subject ID: `107843576032310825663`).
+   * **To**: External Entity / Network = Private Cross-Cloud Interconnect (CCI) routing to AWS PrivateLink endpoints:
+     * AWS S3: `s3.us-east-1.amazonaws.com` (Bucket: `arn:aws:s3:::cymbal-retail-lakehouse-bucket`)
+     * AWS Glue: `glue.us-east-1.amazonaws.com` (Catalog: `123456789012`)
+2. **Egress Rule 2: Vertex AI Search GCS Object Table Ingestion**:
+   * **From**: Identity = `service-89512879998@gcp-sa-discoveryengine.iam.gserviceaccount.com`.
+   * **To**: Target Service = `storage.googleapis.com`, Scoped Project = `projects/89512879998` (Resource: `projects/_/buckets/eco-emissary-356802-module1-bucket`).
+
+---
+
+## **4.3. Cross-Account Handshake & AWS IAM Trust Policy for S3 Federation**
+
+To establish zero-copy federated analytics over AWS S3 Apache Iceberg tables without permanent access keys, Cymbal Retail implements an **OpenID Connect (OIDC) Web Identity Federation** handshake between Google Cloud BigLake and AWS IAM:
+
+* **Google Cloud BigLake REST Catalog Service Account**:
+  * Email: `blirc-89512879998-m26clzth@gcp-sa-biglakerestcatalog.iam.gserviceaccount.com`
+  * Unique Service Account ID (`sub`): `107843576032310825663` (Registered via `go/da-advanced-sa-id`)
+  * OIDC Identity Provider (Issuer): `accounts.google.com`
+* **Target AWS IAM Role**:
+  * Role ARN: `arn:aws:iam::123456789012:role/CymbalBigLakeIcebergRole`
+
+### **4.3.1. Exact AWS IAM Trust Policy (`TrustRelationship.json`)**
+Attached to `arn:aws:iam::123456789012:role/CymbalBigLakeIcebergRole`. Enforces cryptographic token validation verifying that only BigLake requests originating from Cymbal's specific Google Cloud service account are permitted to assume the role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BigLakeOIDCAssumeRoleWithWebIdentity",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "accounts.google.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "accounts.google.com:sub": "107843576032310825663",
+          "accounts.google.com:aud": "https://biglake.googleapis.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+### **4.3.2. Exact AWS IAM Permissions Policy (`BigLakeS3GluePermissions.json`)**
+Grants the assumed role least-privilege read-only permissions across the remote AWS S3 Iceberg data files and AWS Glue metadata catalog:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowS3IcebergBucketList",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::cymbal-retail-lakehouse-bucket"
+      ]
+    },
+    {
+      "Sid": "AllowS3IcebergObjectRead",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::cymbal-retail-lakehouse-bucket/silver/*",
+        "arn:aws:s3:::cymbal-retail-lakehouse-bucket/metadata/*"
+      ]
+    },
+    {
+      "Sid": "AllowGlueCatalogMetadataRead",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:GetPartitions"
+      ],
+      "Resource": [
+        "arn:aws:glue:us-east-1:123456789012:catalog",
+        "arn:aws:glue:us-east-1:123456789012:database/cymbal_lakehouse",
+        "arn:aws:glue:us-east-1:123456789012:table/cymbal_lakehouse/*"
+      ]
+    }
+  ]
+}
+```
+
+### **4.3.3. BigLake External Schema Registration (GoogleSQL DDL)**
+Once the AWS trust handshake is active, BigQuery registers the remote Iceberg dataset seamlessly:
+
+```sql
+-- Register remote AWS S3 Iceberg Catalog into Google Cloud BigQuery
+CREATE OR REPLACE EXTERNAL SCHEMA `eco-emissary-356802.cymbal_lakehouse_aws`
+WITH CONNECTION `us-central1.cymbal-lakehouse`
+OPTIONS (
+  format = 'ICEBERG',
+  catalog_type = 'AWS_GLUE',
+  catalog_id = '123456789012',
+  role_arn = 'arn:aws:iam::123456789012:role/CymbalBigLakeIcebergRole',
+  location = 's3://cymbal-retail-lakehouse-bucket/silver/'
+);
+```
 
 ---
 
