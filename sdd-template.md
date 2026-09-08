@@ -312,25 +312,35 @@ sequenceDiagram
 
 # **4. Data Platform Architecture, Security & Governance**
 
-## **4.1. Entity Definitions & Storage Schema**
+## **4.1. Entity Definitions, Storage Schema & Data Lifecycle Management**
 
-### **BigQuery Datasets & Tables**
-* **`cymbal_gold.historical_transactional_data`**:
-  * Partitioned by `DAY(business_date)`, clustered by `transaction_id`, `store_id`, `customer_id`.
-  * Schema: `transaction_id` (STRING), `store_id` (STRING), `cashier_id` (STRING), `customer_id` (STRING), `item_id` (STRING), `gross_amount` (NUMERIC), `card_number` (STRING, Policy Tagged), `override_flag` (BOOLEAN), `business_date` (DATE).
-* **`cymbal_gold.gold_inventory_reconciliation_ledger`**:
-  * BigLake Iceberg Managed Table backed by Parquet files on GCS (`eco-emissary-356802-module1-bucket/gold_inventory_reconciliation_ledger/`).
-  * Schema: `store_id` (STRING), `item_id` (STRING), `physical_inventory_count` (INT64), `system_inventory_count` (INT64), `variance_amount` (NUMERIC), `reconciliation_status` (STRING).
-* **`cymbal-lakehouse` (BigLake Federated Catalog)**:
-  * Open REST Catalog connected to AWS Glue / S3. Contains Silver conformed fact tables (`sales_orders`, `customer_dimension`, `product_catalog`).
+### **4.1.1. BigQuery Datasets & Explicit Lifecycle Policies**
 
-### **Cloud Bigtable (`operations-db`) Schema**
-* **Table**: `pos_operational_cache`
-* **Column Family**: `cf_metrics` (Max Versions: 1, TTL: 7 days).
-* **Row Key Structure**:
-  * Store Aggregation: `STORE#<store_id>#<YYYYMMDD>`
-  * Cashier Aggregation: `CASHIER#<cashier_id>#<YYYYMMDDHH>`
+To strictly manage long-term storage costs and prevent unbounded data accumulation across retail operations, Cymbal Retail enforces dataset-level default expirations, table-level partition expirations, and automatic long-term pricing transitions:
+
+| Dataset / Table | Medallion Layer | Partitioning & Clustering Strategy | Explicit Partition Expiration Policy | Storage Pricing Tier & Retention Lifecycle | Cost Optimization Rationale |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`cymbal_bronze.*`** | Bronze (Raw Landing) | Partitioned by `DAY(_PARTITIONDATE)` | **30 Days** (`default_partition_expiration_ms = 2,592,000,000`) | Dropped automatically after 30 days. No long-term storage. | Prevents high-throughput streaming Kafka telemetry dumps from accumulating unmanaged storage debt. |
+| **`cymbal_silver.*`** | Silver (Conformed Facts & Dims) | Partitioned by `DAY(order_date)`, clustered by `store_id`, `customer_id` | **90 Days Active** (`default_partition_expiration_ms = 7,776,000,000`) | Partitions unedited for > 90 days automatically drop to **BigQuery Long-Term Storage Pricing** ($0.01/GB/mo, 50% discount). | Maximizes vectorized scan performance for current quarter analytics while cutting dormant data storage costs in half. |
+| **`historical_transactional_data`** (`cymbal_gold`) | Gold (Curated Fact) | Partitioned by `DAY(business_date)`, clustered by `transaction_id`, `store_id`, `cashier_id` | **730 Days (2 Years)** (`partition_expiration_days = 730`) | Active rate for 90 days ($0.02/GB); remaining 640 days billed at Long-Term Storage ($0.01/GB). Dropped after 24 months. | Retains conformed transactions for tax auditing, multi-year fraud models, and warranty triage while bounding max footprint. |
+| **`gold_inventory_reconciliation_ledger`** (`cymbal_gold`) | Gold (Audit Ledger) | BigLake Iceberg Managed Table on GCS, partitioned by `DAY(reconciliation_date)` | **365 Days (1 Year)** | Parquet format; GCS Object Lifecycle rules manage cold tiering automatically. | Preserves daily opening/closing inventory balances for fiscal year reporting with zero compute tax. |
+| **`cymbal_governance`** (Audit Logs & Agent Traces) | Governance & Audit | Partitioned by `DAY(timestamp)` | **180 Days (6 Months)** (`partition_expiration_days = 180`) | 90 days active, 90 days long-term. Hard purge at 180 days. | Fully complies with enterprise security audit standards while preventing LLM prompt/completion trace bloat. |
+
+### **4.1.2. Cloud Bigtable Operational Cache Schema & GC Policy**
+* **Instance**: `operations-db`, Table: `pos_operational_cache`
+* **Column Family**: `cf_metrics`
+* **Garbage Collection (GC) Policy**: `gc_rule = "max_age = '7d'"` (Strict 7-day TTL automatically evicts obsolete sliding-window cashier metrics and alert statuses, maintaining a flat storage footprint < 50 GB).
+* **Row Key Design**:
+  * Store Rollup: `STORE#<store_id>#<YYYYMMDD>`
+  * Cashier Rollup: `CASHIER#<cashier_id>#<YYYYMMDDHH>`
 * **Column Qualifiers**: `override_count_1h`, `anomaly_score`, `last_transaction_ts`, `alert_status`.
+
+### **4.1.3. Cloud Storage (GCS) Unstructured Data Lifecycle Rules**
+For bucket `eco-emissary-356802-module1-bucket` (storing POS hardware manuals and warranty PDFs):
+* **Age > 30 Days**: Automatically transitions objects to **Nearline Storage** ($0.010/GB/month).
+* **Age > 90 Days**: Automatically transitions objects to **Coldline Storage** ($0.004/GB/month).
+* **Age > 365 Days**: Transitions archival copies to **Archive Storage** ($0.0012/GB/month).
+* **Noncurrent Object Versions**: Permanently deleted after 14 days to prevent stale document accumulation.
 
 ---
 
@@ -360,10 +370,24 @@ sequenceDiagram
 | **`search_technical_manuals`** | Coordinator / RAG Subagent | BigQuery Vector Search / GCS | `{"query": STRING, "top_k": INT, "doc_type": "POS_MANUAL"\|"WARRANTY"}` | Top text chunks with document URL, page number, and similarity score (SLA: < 1.8s) | If max similarity < 0.7, trigger fallback: *"I cannot find certified repair rules in our repository."* |
 | **`score_transaction_realtime`** | Streaming Worker | Vertex AI Endpoints | `{"cashier_id": STRING, "discount_pct": FLOAT, "item_count": INT, "amount": FLOAT}` | `{"anomaly_score": FLOAT, "fraud_risk": "LOW"\|"HIGH"}` (SLA: < 40ms) | If endpoint fails, log incident and push transaction to dead-letter topic without blocking stream. |
 
-## **5.2. Failure Modes & Graceful Degradation**
-* **Cross-Cloud Link Failure**: If the AWS S3 Lakehouse connection drops, the Coordinator Router informs the user: *"Historical AWS data is temporarily unreachable. Live store alerts and local inventory remain available."*
-* **Partial Synthesis**: In multi-system flows (UC-2.1 / UC-2.2), if one subsystem fails, the Coordinator delivers the completed segment with an explicit advisory regarding the pending subsystem.
-* **Transient Faults**: All tool gateways implement exponential backoff with jitter (initial backoff: 200ms, max retries: 3).
+## **5.2. Failure Modes & Comprehensive Error-Handling Matrix**
+
+To ensure high availability, enterprise resilience, and predictable degradation across multi-system operations, Cymbal Retail maps every component failure mode to automated detection, retry/circuit breaker policies, and graceful fallback actions:
+
+| Subsystem / Layer | Component | Failure Mode / Scenario | Detection Mechanism & Error Code | Circuit Breaker & Retry Policy | Fallback Action / Degradation Strategy | Automated Recovery / Self-Healing |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Client & Gateway** | **Cloud Run (Chat Portal)** | Client connection drop or WebSocket timeout during turn (> 6.0s). | `HTTP 504 Gateway Timeout` / Client disconnect event | Reconnect with exponential backoff (1s, 2s, 4s; max 3 retries). | Render partial streamed response with notification: *"Response streaming timed out; last known status preserved."* | Container auto-scales and routes subsequent turns to healthy instances. |
+| **AI Security** | **Vertex AI Model Armor** | Prompt injection attack or malicious jailbreak attempt detected. | `MODEL_ARMOR_INJECTION_DETECTED` / `HTTP 400 Bad Request` | **Zero Retry** (Immediate request drop). | Deliver standardized refusal: *"Your prompt contains patterns violating enterprise security policies."* | Logs attacker token and prompt hash to Cloud Logging; triggers security telemetry alert. |
+| **Agent Orchestration** | **Vertex AI Agent Builder** | Intent classification ambiguity or unmapped retail domain (Confidence < 0.65). | Intent classifier confidence score < 0.65 | **Zero Retry** (Prevents hallucinated routing). | Present interactive disambiguation buttons: *"Did you mean: (1) Check Store Inventory, (2) POS Repair Manual, or (3) Cashier Risk?"* | Unmapped queries export to Dataplex audit logs for continuous glossary fine-tuning. |
+| **Lakehouse Federation** | **BigLake REST Catalog / AWS S3** | Cross-Cloud link down, AWS STS AssumeRole token expiry, or S3 unreachable. | `UNAVAILABLE` / `401 Unauthorized` / `ERR-CCI-TIMEOUT` | Circuit breaker trips after 3 consecutive failures (60s open-window cooldown). | Deliver degraded response: *"Historical AWS data is temporarily unreachable. Live store alerts and local inventory remain available."* | Workload Identity Federation auto-refreshes AWS STS tokens; CCI auto-re-establishes BGP routes. |
+| **Analytical Query** | **BigQuery Studio & Engine** | Slot reservation saturation or concurrent query quota exhaustion. | `RESOURCE_EXHAUSTED` / `429 Quota Exceeded` | Exponential backoff with jitter (initial: 500ms, max 3 retries); Autoscaling Slots burst. | Query automatically redirects to cached summary rollups in `cymbal_gold` dataset. | BigQuery Enterprise Autoscaling Slots expand from baseline up to max burst reservation. |
+| **Data Privacy & Governance** | **Sensitive Data Protection (SDP)** | Policy tag evaluation failure or unauthorized reader persona attempting PII query. | `PERMISSION_DENIED` / `403 DataPolicyEvaluationError` | Zero Retry for access denial; 1 retry if transient auth sync delay. | Dynamic column masking routine automatically replaces card digits with `XXXX-XXXX-XXXX-9999`. | Audit event logged to Dataplex & Cloud Audit Logs; user notified of masked view. |
+| **Operational Cache** | **Cloud Bigtable (`operations-db`)** | Node hotspotting or gRPC timeout during point lookup (> 50ms SLA). | `DEADLINE_EXCEEDED` / `14 UNAVAILABLE` (> 80ms) | Retry 2 times with 50ms backoff; circuit breaker trips if P99 > 200ms. | Fall back to direct indexed point lookup on BigQuery `historical_transactional_data`. | Bigtable Autoscaler automatically provisions additional nodes if CPU > 70%. |
+| **Event Broker** | **Managed Service for Apache Kafka** | Broker partition rebalance or temporary leader failover. | `LEADER_NOT_AVAILABLE` / `NOT_ENOUGH_REPLICAS` | Producer retries up to 5 times (`retry.backoff.ms = 200`) using local producer in-memory buffer. | If buffer exceeds 80% capacity, spillover events route to secondary Cloud Pub/Sub dead-letter topic. | Managed Kafka cluster initiates automated partition leader election (< 3s recovery). |
+| **Stream Analytics** | **Google Cloud Dataflow** | Poison-pill message (malformed JSON telemetry violating schema). | `JSON_PARSE_EXCEPTION` / `SCHEMA_VALIDATION_FAILED` | **Zero Retry** (Prevents streaming pipeline deadlock / infinite loops). | Route corrupted payload to Dead-Letter Topic (`pos-transactions-dlq`) with parse error stack trace. | Pipeline continues streaming clean events uninterrupted; alert dispatched to on-call engineer. |
+| **Real-Time ML Scoring** | **Vertex AI Model Serving** | Model endpoint latency spike (> 50ms) or model container crash. | `UNAVAILABLE` / `503 Service Unavailable` (> 50ms timeout) | Timeout breaker trips at 60ms; bypasses endpoint to protect POS checkout latency. | Assign default baseline heuristic risk score (`anomaly_score = 0.0, manual_audit = true`) without blocking checkout. | Vertex AI Model Serving auto-replaces unhealthy container replicas. |
+| **Document Search (RAG)** | **Vertex AI Search** | Document similarity score below grounding threshold (< 0.7) or PDF missing. | `GROUNDING_SCORE_BELOW_THRESHOLD` / `DOC_NOT_FOUND` | **Zero Retry** (Grounding guardrail enforcement). | Graceful refusal: *"I cannot find certified warranty or repair rules for this specific error in our repository."* | Unanswered query logged to GCS dark data queue for technical manual gap resolution. |
+| **Batch Pipeline** | **MSAA & Dataproc Serverless** | PySpark batch reconciliation job failure / executor OOM crash. | `SPARK_JOB_FAILED` / `OOMKilled` (Exit code 137) | Managed Airflow retries DAG task up to 2 times (`retry_delay = 5m`) with +50% memory allocation. | Previous night's gold ledger snapshot remains active; morning dashboard alerts: *"Inventory baseline as of 23:59 yesterday"*. | MSAA re-launches Dataproc Serverless batch with higher executor memory overhead. |
 
 ## **5.3. Deterministic State Passing & ID Integrity Protocol (Anti-Chunking & Anti-Hallucination)**
 
